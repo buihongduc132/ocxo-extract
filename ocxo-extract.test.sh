@@ -125,23 +125,23 @@ assert_contains "No text content found" "$OUTPUT" "Null text shows error message
 
 # Test 7: Normal last-text extraction
 echo -e "\n${YELLOW}Test Group: Normal Extraction${NC}"
-NORMAL_INPUT='{"type":"text","sessionID":"ses_normal","part":{"text":"First text"}}
-{"type":"text","sessionID":"ses_normal","part":{"text":"Last text"}}'
-run_and_capture "$NORMAL_INPUT" last-text --no-session
+NORMAL_INPUT='{"type":"text","timestamp":1000,"sessionID":"ses_normal","part":{"text":"First text"}}
+{"type":"text","timestamp":2000,"sessionID":"ses_normal","part":{"text":"Last text"}}'
+run_and_capture "$NORMAL_INPUT" last-text --no-session --no-duration
 assert_exit_code 0 "$EXIT_CODE" "last-text returns exit code 0"
 assert_equals "Last text" "$OUTPUT" "last-text extracts last text"
 
 # Test 8: final-text extraction
-FINAL_INPUT='{"type":"text","sessionID":"ses_final","part":{"text":"Final message text","messageID":"msg_final"}}
-{"type":"step_finish","sessionID":"ses_final","part":{"messageID":"msg_final"}}'
-run_and_capture "$FINAL_INPUT" final-text --no-session
+FINAL_INPUT='{"type":"text","timestamp":1000,"sessionID":"ses_final","part":{"text":"Final message text","messageID":"msg_final"}}
+{"type":"step_finish","timestamp":2000,"sessionID":"ses_final","part":{"messageID":"msg_final"}}'
+run_and_capture "$FINAL_INPUT" final-text --no-session --no-duration
 assert_exit_code 0 "$EXIT_CODE" "final-text returns exit code 0"
 assert_equals "Final message text" "$OUTPUT" "final-text extracts correct text"
 
 # Test 9: before-finish extraction
-BEFORE_FINISH_INPUT='{"type":"text","sessionID":"ses_before","part":{"text":"Text before finish","messageID":"msg_before"}}
-{"type":"step_finish","sessionID":"ses_before","part":{"messageID":"msg_before"}}'
-run_and_capture "$BEFORE_FINISH_INPUT" before-finish --no-session
+BEFORE_FINISH_INPUT='{"type":"text","timestamp":1000,"sessionID":"ses_before","part":{"text":"Text before finish","messageID":"msg_before"}}
+{"type":"step_finish","timestamp":2000,"sessionID":"ses_before","part":{"messageID":"msg_before"}}'
+run_and_capture "$BEFORE_FINISH_INPUT" before-finish --no-session --no-duration
 assert_exit_code 0 "$EXIT_CODE" "before-finish returns exit code 0"
 assert_equals "Text before finish" "$OUTPUT" "before-finish extracts correct text"
 
@@ -214,6 +214,43 @@ run_and_capture "$NO_TOOLS_INPUT" tools
 assert_exit_code 0 "$EXIT_CODE" "tools with no tools returns exit code 0"
 assert_contains "Total Tool Calls: 0" "$OUTPUT" "tools shows 0 calls"
 assert_contains "(none)" "$OUTPUT" "tools shows none for empty lists"
+
+# Test 17: Duration display
+echo -e "\n${YELLOW}Test Group: Duration${NC}"
+DURATION_INPUT='{"type":"text","timestamp":1000,"sessionID":"ses_dur","part":{"text":"Hello","messageID":"msg1"}}
+{"type":"step_finish","timestamp":5500,"sessionID":"ses_dur","part":{"messageID":"msg1"}}'
+run_and_capture "$DURATION_INPUT" final-text
+assert_exit_code 0 "$EXIT_CODE" "duration returns exit code 0"
+assert_contains "Duration:" "$OUTPUT" "output contains Duration"
+assert_contains "4s" "$OUTPUT" "shows correct duration in seconds"
+
+# Test 18: Duration in milliseconds
+MS_DURATION_INPUT='{"type":"text","timestamp":1000,"sessionID":"ses_ms","part":{"text":"Quick","messageID":"msg1"}}
+{"type":"step_finish","timestamp":1300,"sessionID":"ses_ms","part":{"messageID":"msg1"}}'
+run_and_capture "$MS_DURATION_INPUT" final-text
+assert_contains "300ms" "$OUTPUT" "shows duration in milliseconds"
+
+# Test 19: Duration in minutes
+MIN_DURATION_INPUT='{"type":"text","timestamp":1000,"sessionID":"ses_min","part":{"text":"Long","messageID":"msg1"}}
+{"type":"step_finish","timestamp":125000,"sessionID":"ses_min","part":{"messageID":"msg1"}}'
+run_and_capture "$MIN_DURATION_INPUT" final-text
+assert_contains "2m" "$OUTPUT" "shows duration in minutes"
+
+# Test 20: --no-duration flag
+run_and_capture "$DURATION_INPUT" final-text --no-duration
+assert_contains "Session:" "$OUTPUT" "shows session with --no-duration"
+if [[ "$OUTPUT" == *"Duration:"* ]]; then
+  echo -e "${RED}✗${NC} --no-duration hides duration"
+  ((TESTS_FAILED++))
+else
+  echo -e "${GREEN}✓${NC} --no-duration hides duration"
+  ((TESTS_PASSED++))
+fi
+((TESTS_RUN++))
+
+# Test 21: Tools with duration
+run_and_capture "$DURATION_INPUT" tools
+assert_contains "Duration:" "$OUTPUT" "tools shows duration"
 
 # Summary
 echo

@@ -13,9 +13,10 @@ Subcommands:
   last-text         Extract last text when type == "text"
   before-finish     Extract text just above type == step_finish
   tools             Show tool usage summary (tools called, files read, commands run)
-  
+   
 Options:
   --no-session      Don't output session ID (text only)
+  --no-duration     Don't output duration
   --json            Output tools as JSON (for tools subcommand)
   -h, --help        Show this help message
 
@@ -43,7 +44,25 @@ extract_error() {
   ' 2>/dev/null || echo "Error: Failed to parse error response"
 }
 
+format_duration() {
+  local ms="$1"
+  local seconds=$((ms / 1000))
+  local minutes=$((seconds / 60))
+  local hours=$((minutes / 60))
+  
+  if [[ $hours -gt 0 ]]; then
+    echo "${hours}h $((minutes % 60))m $((seconds % 60))s"
+  elif [[ $minutes -gt 0 ]]; then
+    echo "${minutes}m $((seconds % 60))s"
+  elif [[ $seconds -gt 0 ]]; then
+    echo "${seconds}s"
+  else
+    echo "${ms}ms"
+  fi
+}
+
 SHOW_SESSION=true
+SHOW_DURATION=true
 OUTPUT_JSON=false
 SUBCOMMAND=""
 
@@ -51,6 +70,10 @@ while [[ $# -gt 0 ]]; do
   case $1 in
     --no-session)
       SHOW_SESSION=false
+      shift
+      ;;
+    --no-duration)
+      SHOW_DURATION=false
       shift
       ;;
     --json)
@@ -120,6 +143,11 @@ fi
 
 SESSION_ID=$(echo "$JSON_LINES" | jq -r 'select(.sessionID != null) | .sessionID' | head -1)
 
+DURATION_MS=$(echo "$JSON_LINES" | jq -rs '
+  [.[] | select(.timestamp != null) | .timestamp] |
+  if length > 0 then (last - first) else 0 end
+')
+
 case "$SUBCOMMAND" in
   last-text)
     TEXT=$(echo "$JSON_LINES" | jq -rs '
@@ -174,6 +202,11 @@ case "$SUBCOMMAND" in
     else
       if [[ "$SHOW_SESSION" == "true" && -n "$SESSION_ID" && "$SESSION_ID" != "null" ]]; then
         echo "Session: $SESSION_ID"
+      fi
+      if [[ "$SHOW_DURATION" == "true" && "$DURATION_MS" -gt 0 ]]; then
+        echo "Duration: $(format_duration "$DURATION_MS")"
+      fi
+      if [[ "$SHOW_SESSION" == "true" || "$SHOW_DURATION" == "true" ]]; then
         echo "---"
       fi
       echo "$TOOLS_DATA" | jq -r '
@@ -211,6 +244,11 @@ fi
 
 if [[ "$SHOW_SESSION" == "true" && -n "$SESSION_ID" && "$SESSION_ID" != "null" ]]; then
   echo "Session: $SESSION_ID"
+fi
+if [[ "$SHOW_DURATION" == "true" && "$DURATION_MS" -gt 0 ]]; then
+  echo "Duration: $(format_duration "$DURATION_MS")"
+fi
+if [[ "$SHOW_SESSION" == "true" || "$SHOW_DURATION" == "true" ]]; then
   echo "---"
 fi
 
