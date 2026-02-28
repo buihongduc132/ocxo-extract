@@ -6,20 +6,23 @@ set -euo pipefail
 
 show_usage() {
   cat <<'EOF'
-Usage: ocxo run --command <cmd> --format json | ocxo-extract <subcommand>
+Usage: ocxo run --command <cmd> --format json | ocxo-extract [subcommand]
 
 Subcommands:
+  final-text        Extract text where type == step_finish and messageID is matching (default)
   last-text         Extract last text when type == "text"
   before-finish     Extract text just above type == step_finish
-  final-text        Extract text where type == step_finish and messageID is matching
+  tools             Show tool usage summary (tools called, files read, commands run)
   
 Options:
   --no-session      Don't output session ID (text only)
+  --json            Output tools as JSON (for tools subcommand)
   -h, --help        Show this help message
 
 Examples:
-  ocxo run --command se_infra --format json | ocxo-extract last-text
+  ocxo run --command se_infra --format json | ocxo-extract
   ocxo run --command se_infra --format json | ocxo-extract final-text --no-session
+  ocxo run --command se_infra --format json | ocxo-extract tools
 EOF
 }
 
@@ -40,14 +43,18 @@ extract_error() {
   ' 2>/dev/null || echo "Error: Failed to parse error response"
 }
 
-PARSE_OPTIONS=true
 SHOW_SESSION=true
+OUTPUT_JSON=false
 SUBCOMMAND=""
 
 while [[ $# -gt 0 ]]; do
   case $1 in
     --no-session)
       SHOW_SESSION=false
+      shift
+      ;;
+    --json)
+      OUTPUT_JSON=true
       shift
       ;;
     -h|--help)
@@ -68,9 +75,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$SUBCOMMAND" ]]; then
-  echo "Error: No subcommand specified" >&2
-  show_usage >&2
-  exit 1
+  SUBCOMMAND="final-text"
 fi
 
 RAW_INPUT=$(cat)
@@ -149,6 +154,47 @@ case "$SUBCOMMAND" in
         null
       end
     ')
+    ;;
+    
+  tools)
+    TOOLS_DATA=$(echo "$JSON_LINES" | jq -rs '
+      [.[] | select(.type == "tool_use")] |
+      {
+        tools: [.[] | .part.toolName] | unique,
+        files_read: [.[] | select(.part.toolName == "read") | .part.input.filePath // .part.input.file_path // empty],
+        files_written: [.[] | select(.part.toolName == "write" or .part.toolName == "edit") | .part.input.filePath // .part.input.file_path // empty],
+        commands: [.[] | select(.part.toolName == "bash") | .part.input.command // empty],
+        total_calls: length,
+        by_tool: [.[] | .part.toolName] | group_by(.) | map({name: .[0], count: length})
+      }
+    ')
+    
+    if [[ "$OUTPUT_JSON" == "true" ]]; then
+      echo "$TOOLS_DATA"
+    else
+      if [[ "$SHOW_SESSION" == "true" && -n "$SESSION_ID" && "$SESSION_ID" != "null" ]]; then
+        echo "Session: $SESSION_ID"
+        echo "---"
+      fi
+      echo "$TOOLS_DATA" | jq -r '
+        "Tools Used: " + (.tools | join(", ")),
+        "",
+        "Total Tool Calls: " + (.total_calls | tostring),
+        "",
+        "Calls by Tool:",
+        (.by_tool[] | "  \(.name): \(.count)"),
+        "",
+        "Files Read:",
+        (if (.files_read | length) > 0 then .files_read[] | "  \(.)" else "  (none)" end),
+        "",
+        "Files Written/Edited:",
+        (if (.files_written | length) > 0 then .files_written[] | "  \(.)" else "  (none)" end),
+        "",
+        "Commands Run:",
+        (if (.commands | length) > 0 then .commands[] | "  \(.)" else "  (none)" end)
+      '
+    fi
+    exit 0
     ;;
     
   *)

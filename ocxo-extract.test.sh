@@ -170,6 +170,50 @@ OUTPUT=$("$SCRIPT" --help 2>&1) && EXIT_CODE=0 || EXIT_CODE=$?
 assert_exit_code 0 "$EXIT_CODE" "Help flag returns exit code 0"
 assert_contains "last-text" "$OUTPUT" "Help shows last-text subcommand"
 assert_contains "final-text" "$OUTPUT" "Help shows final-text subcommand"
+assert_contains "tools" "$OUTPUT" "Help shows tools subcommand"
+
+# Test 13: Default subcommand (no subcommand = final-text)
+echo -e "\n${YELLOW}Test Group: Default Subcommand${NC}"
+run_and_capture "$FINAL_INPUT" 
+assert_exit_code 0 "$EXIT_CODE" "No subcommand defaults to final-text"
+assert_contains "Final message text" "$OUTPUT" "Default extracts final-text correctly"
+
+# Test 14: Tools subcommand
+echo -e "\n${YELLOW}Test Group: Tools Subcommand${NC}"
+TOOLS_INPUT='{"type":"tool_use","sessionID":"ses_tools","part":{"toolName":"read","input":{"filePath":"/path/to/file1.md"},"messageID":"msg1"}}
+{"type":"tool_result","sessionID":"ses_tools","part":{"toolName":"read","output":"content","messageID":"msg1"}}
+{"type":"tool_use","sessionID":"ses_tools","part":{"toolName":"bash","input":{"command":"ls -la"},"messageID":"msg1"}}
+{"type":"tool_use","sessionID":"ses_tools","part":{"toolName":"read","input":{"filePath":"/path/to/file2.md"},"messageID":"msg1"}}
+{"type":"tool_use","sessionID":"ses_tools","part":{"toolName":"edit","input":{"filePath":"/path/to/file3.md"},"messageID":"msg1"}}
+{"type":"text","sessionID":"ses_tools","part":{"text":"Done","messageID":"msg1"}}
+{"type":"step_finish","sessionID":"ses_tools","part":{"messageID":"msg1"}}'
+
+run_and_capture "$TOOLS_INPUT" tools
+assert_exit_code 0 "$EXIT_CODE" "tools subcommand returns exit code 0"
+assert_contains "Tools Used:" "$OUTPUT" "tools shows Tools Used header"
+assert_contains "bash" "$OUTPUT" "tools shows bash tool"
+assert_contains "read" "$OUTPUT" "tools shows read tool"
+assert_contains "edit" "$OUTPUT" "tools shows edit tool"
+assert_contains "Total Tool Calls: 4" "$OUTPUT" "tools shows correct total"
+assert_contains "/path/to/file1.md" "$OUTPUT" "tools shows file1 read"
+assert_contains "/path/to/file2.md" "$OUTPUT" "tools shows file2 read"
+assert_contains "/path/to/file3.md" "$OUTPUT" "tools shows file3 edited"
+assert_contains "ls -la" "$OUTPUT" "tools shows command"
+
+# Test 15: Tools subcommand with --json flag
+run_and_capture "$TOOLS_INPUT" tools --json --no-session
+assert_exit_code 0 "$EXIT_CODE" "tools --json returns exit code 0"
+assert_contains '"tools"' "$OUTPUT" "tools --json contains tools array"
+assert_contains '"total_calls"' "$OUTPUT" "tools --json contains total_calls"
+assert_contains '"files_read"' "$OUTPUT" "tools --json contains files_read"
+
+# Test 16: Tools with no tool usage
+NO_TOOLS_INPUT='{"type":"text","sessionID":"ses_no_tools","part":{"text":"Just text","messageID":"msg1"}}
+{"type":"step_finish","sessionID":"ses_no_tools","part":{"messageID":"msg1"}}'
+run_and_capture "$NO_TOOLS_INPUT" tools
+assert_exit_code 0 "$EXIT_CODE" "tools with no tools returns exit code 0"
+assert_contains "Total Tool Calls: 0" "$OUTPUT" "tools shows 0 calls"
+assert_contains "(none)" "$OUTPUT" "tools shows none for empty lists"
 
 # Summary
 echo
