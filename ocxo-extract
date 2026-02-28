@@ -1,0 +1,171 @@
+#!/usr/bin/env bash
+# ocxo-extract - Extract text and metadata from ocxo JSON output
+# Usage: ocxo run --command <cmd> --format json | ocxo-extract <subcommand>
+
+set -euo pipefail
+
+show_usage() {
+  cat <<'EOF'
+Usage: ocxo run --command <cmd> --format json | ocxo-extract <subcommand>
+
+Subcommands:
+  last-text         Extract last text when type == "text"
+  before-finish     Extract text just above type == step_finish
+  final-text        Extract text where type == step_finish and messageID is matching
+  
+Options:
+  --no-session      Don't output session ID (text only)
+  -h, --help        Show this help message
+
+Examples:
+  ocxo run --command se_infra --format json | ocxo-extract last-text
+  ocxo run --command se_infra --format json | ocxo-extract final-text --no-session
+EOF
+}
+
+is_valid_json() {
+  echo "$1" | jq -e . >/dev/null 2>&1
+}
+
+extract_error() {
+  local json="$1"
+  echo "$json" | jq -r '
+    if .error then
+      "Error: " + (.error.name // "Unknown") + 
+      "\nMessage: " + (.error.data.message // "No message") +
+      "\nStatus: " + ((.error.data.statusCode // "N/A") | tostring)
+    else
+      "Error: Unknown error format"
+    end
+  ' 2>/dev/null || echo "Error: Failed to parse error response"
+}
+
+PARSE_OPTIONS=true
+SHOW_SESSION=true
+SUBCOMMAND=""
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --no-session)
+      SHOW_SESSION=false
+      shift
+      ;;
+    -h|--help)
+      show_usage
+      exit 0
+      ;;
+    *)
+      if [[ -z "$SUBCOMMAND" ]]; then
+        SUBCOMMAND="$1"
+      else
+        echo "Error: Unknown argument: $1" >&2
+        show_usage >&2
+        exit 1
+      fi
+      shift
+      ;;
+  esac
+done
+
+if [[ -z "$SUBCOMMAND" ]]; then
+  echo "Error: No subcommand specified" >&2
+  show_usage >&2
+  exit 1
+fi
+
+RAW_INPUT=$(cat)
+
+if [[ -z "$RAW_INPUT" ]]; then
+  echo "Error: No input provided" >&2
+  exit 1
+fi
+
+JSON_LINES=""
+NON_JSON_LINES=""
+while IFS= read -r line; do
+  if [[ -z "$line" ]]; then
+    continue
+  fi
+  if is_valid_json "$line"; then
+    JSON_LINES="${JSON_LINES}${line}"$'\n'
+  else
+    NON_JSON_LINES="${NON_JSON_LINES}${line}"$'\n'
+  fi
+done <<< "$RAW_INPUT"
+
+if [[ -z "$JSON_LINES" ]]; then
+  echo "Error: No valid JSON found in input" >&2
+  if [[ -n "$NON_JSON_LINES" ]]; then
+    echo "Non-JSON output:" >&2
+    echo "$NON_JSON_LINES" >&2
+  fi
+  exit 1
+fi
+
+FIRST_JSON=$(echo "$JSON_LINES" | head -1)
+if echo "$FIRST_JSON" | jq -e '.type == "error"' >/dev/null 2>&1; then
+  if [[ "$SHOW_SESSION" == "true" ]]; then
+    SESSION_ID=$(echo "$FIRST_JSON" | jq -r '.sessionID // "N/A"')
+    echo "Session: $SESSION_ID"
+    echo "---"
+  fi
+  extract_error "$FIRST_JSON"
+  exit 1
+fi
+
+SESSION_ID=$(echo "$JSON_LINES" | jq -r 'select(.sessionID != null) | .sessionID' | head -1)
+
+case "$SUBCOMMAND" in
+  last-text)
+    TEXT=$(echo "$JSON_LINES" | jq -rs '
+      [.[] | select(.type == "text")] | 
+      if length > 0 then last.part.text else null end
+    ')
+    ;;
+    
+  before-finish)
+    TEXT=$(echo "$JSON_LINES" | jq -rs '
+      [.[]] as $all |
+      last($all[] | select(.type == "step_finish")) as $last_finish |
+      if $last_finish then
+        [$all[] | select(.type == "text" and .part.messageID == $last_finish.part.messageID)] |
+        if length > 0 then last.part.text else null end
+      else
+        null
+      end
+    ')
+    ;;
+    
+  final-text)
+    TEXT=$(echo "$JSON_LINES" | jq -rs '
+      [.[]] |
+      group_by(.part.messageID) | 
+      map(select(any(.[]; .type == "step_finish"))) |
+      if length > 0 then
+        last | 
+        [.[] | select(.type == "text")] | 
+        if length > 0 then last.part.text else null end
+      else
+        null
+      end
+    ')
+    ;;
+    
+  *)
+    echo "Error: Unknown subcommand: $SUBCOMMAND" >&2
+    show_usage >&2
+    exit 1
+    ;;
+esac
+
+if [[ "$TEXT" == "null" || -z "$TEXT" ]]; then
+  echo "Error: No text content found for subcommand '$SUBCOMMAND'" >&2
+  exit 1
+fi
+
+if [[ "$SHOW_SESSION" == "true" && -n "$SESSION_ID" && "$SESSION_ID" != "null" ]]; then
+  echo "Session: $SESSION_ID"
+  echo "---"
+fi
+
+echo "$TEXT"
