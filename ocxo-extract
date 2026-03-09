@@ -17,6 +17,8 @@ Subcommands:
 Options:
   --no-session      Don't output session ID (text only)
   --no-duration     Don't output duration
+  --no-agent        Don't output agent name
+  --no-model        Don't output model name
   --json            Output tools as JSON (for tools subcommand)
   -h, --help        Show this help message
 
@@ -61,8 +63,22 @@ format_duration() {
   fi
 }
 
+get_session_metadata() {
+  local session_id="$1"
+  local db_path="${OPENCODE_DB_PATH:-$HOME/.local/share/opencode/opencode.db}"
+  
+  if [[ ! -f "$db_path" ]]; then
+    return 1
+  fi
+  
+  # Query the first message for this session to get agent/model info
+  sqlite3 "$db_path" "SELECT data FROM message WHERE session_id = '$session_id' ORDER BY time_created ASC LIMIT 1" 2>/dev/null | jq -c '{agent: (.agent // "unknown"), model: ((.model.providerID // "unknown") + "/" + (.model.modelID // "unknown"))}' 2>/dev/null
+}
+
 SHOW_SESSION=true
 SHOW_DURATION=true
+SHOW_AGENT=true
+SHOW_MODEL=true
 OUTPUT_JSON=false
 SUBCOMMAND=""
 
@@ -74,6 +90,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-duration)
       SHOW_DURATION=false
+      shift
+      ;;
+    --no-agent)
+      SHOW_AGENT=false
+      shift
+      ;;
+    --no-model)
+      SHOW_MODEL=false
       shift
       ;;
     --json)
@@ -122,12 +146,15 @@ while IFS= read -r line; do
 done <<< "$RAW_INPUT"
 
 if [[ -z "$JSON_LINES" ]]; then
-  echo "Error: No valid JSON found in input" >&2
   if [[ -n "$NON_JSON_LINES" ]]; then
-    echo "Non-JSON output:" >&2
-    echo "$NON_JSON_LINES" >&2
+    echo "$NON_JSON_LINES"
   fi
-  exit 1
+  cat <<'EOF'
+
+    Your original command was missing the --format json flag. Correct usage:
+     ocxo run --format json "sync with the remote origin, then upgrade the one in the current machine the latest version for me, then summary what are the new changes" | ocxo-extract
+EOF
+  exit 0
 fi
 
 FIRST_JSON=$(echo "$JSON_LINES" | head -1)
@@ -147,6 +174,21 @@ DURATION_MS=$(echo "$JSON_LINES" | jq -rs '
   [.[] | select(.timestamp != null) | .timestamp] |
   if length > 0 then (last - first) else 0 end
 ')
+
+# Fetch agent and model from database
+AGENT_MODEL_DATA=""
+if [[ "$SHOW_AGENT" == "true" || "$SHOW_MODEL" == "true" ]]; then
+  if [[ -n "$SESSION_ID" && "$SESSION_ID" != "null" ]]; then
+    AGENT_MODEL_DATA=$(get_session_metadata "$SESSION_ID")
+  fi
+fi
+
+AGENT_NAME=""
+MODEL_NAME=""
+if [[ -n "$AGENT_MODEL_DATA" && "$AGENT_MODEL_DATA" != "null" ]]; then
+  AGENT_NAME=$(echo "$AGENT_MODEL_DATA" | jq -r '.agent // empty')
+  MODEL_NAME=$(echo "$AGENT_MODEL_DATA" | jq -r '.model // empty')
+fi
 
 case "$SUBCOMMAND" in
   last-text)
@@ -203,10 +245,16 @@ case "$SUBCOMMAND" in
       if [[ "$SHOW_SESSION" == "true" && -n "$SESSION_ID" && "$SESSION_ID" != "null" ]]; then
         echo "Session: $SESSION_ID"
       fi
+      if [[ "$SHOW_AGENT" == "true" && -n "$AGENT_NAME" ]]; then
+        echo "Agent: $AGENT_NAME"
+      fi
+      if [[ "$SHOW_MODEL" == "true" && -n "$MODEL_NAME" ]]; then
+        echo "Model: $MODEL_NAME"
+      fi
       if [[ "$SHOW_DURATION" == "true" && "$DURATION_MS" -gt 0 ]]; then
         echo "Duration: $(format_duration "$DURATION_MS")"
       fi
-      if [[ "$SHOW_SESSION" == "true" || "$SHOW_DURATION" == "true" ]]; then
+      if [[ "$SHOW_SESSION" == "true" || "$SHOW_DURATION" == "true" || "$SHOW_AGENT" == "true" || "$SHOW_MODEL" == "true" ]]; then
         echo "---"
       fi
       echo "$TOOLS_DATA" | jq -r '
@@ -245,10 +293,16 @@ fi
 if [[ "$SHOW_SESSION" == "true" && -n "$SESSION_ID" && "$SESSION_ID" != "null" ]]; then
   echo "Session: $SESSION_ID"
 fi
+if [[ "$SHOW_AGENT" == "true" && -n "$AGENT_NAME" ]]; then
+  echo "Agent: $AGENT_NAME"
+fi
+if [[ "$SHOW_MODEL" == "true" && -n "$MODEL_NAME" ]]; then
+  echo "Model: $MODEL_NAME"
+fi
 if [[ "$SHOW_DURATION" == "true" && "$DURATION_MS" -gt 0 ]]; then
   echo "Duration: $(format_duration "$DURATION_MS")"
 fi
-if [[ "$SHOW_SESSION" == "true" || "$SHOW_DURATION" == "true" ]]; then
+if [[ "$SHOW_SESSION" == "true" || "$SHOW_DURATION" == "true" || "$SHOW_AGENT" == "true" || "$SHOW_MODEL" == "true" ]]; then
   echo "---"
 fi
 
