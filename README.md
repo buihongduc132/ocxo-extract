@@ -1,21 +1,15 @@
 # ocxo-extract
 
-Extract text and metadata from ocxo JSON output.
+Compatibility wrapper for the unified `agent-extract` implementation.
 
 ## Installation
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/buihongduc132/ocxo-extract/main/ocxo-extract -o ~/.local/bin/ocxo-extract
-chmod +x ~/.local/bin/ocxo-extract
-```
-
-## Usage
-
-```bash
 ocxo run --command <cmd> --format json | ocxo-extract [subcommand]
+codex exec --json "<prompt>" | cli/ops/agent-extract/agent-extract [subcommand]
 ```
 
-**Default:** If no subcommand is specified, uses `final-text`.
+**Default:** If no subcommand is specified, `final-text` is used.
 
 ### Subcommands
 
@@ -31,14 +25,20 @@ ocxo run --command <cmd> --format json | ocxo-extract [subcommand]
 | Option | Description |
 |--------|-------------|
 | `--no-session` | Don't output session ID (text only) |
+| `--no-duration` | Don't output duration |
+| `--no-agent` | Don't output agent name |
+| `--no-model` | Don't output model name |
 | `--json` | Output tools as JSON (for tools subcommand) |
 | `-h, --help` | Show help message |
 
 ## Examples
 
 ```bash
-# Default - extract final text
+# OpenCode
 ocxo run "Read 3 files and summarize" --format json | ocxo-extract
+
+# Codex
+codex exec --json "Read 3 files and summarize" | cli/ops/agent-extract/agent-extract
 
 # Extract last text without session
 ocxo run --command se_infra --format json | ocxo-extract last-text --no-session
@@ -88,12 +88,14 @@ Commands Run:
 ## Error Handling
 
 Handles:
-- Error responses (`type: error`) - displays error name, message, status code
-- Non-JSON lines - filters gracefully
-- Null/empty results - proper error messages
+- OpenCode JSONL
+- Codex `exec --json` JSONL
+- Error responses
+- Mixed JSON/non-JSON input
+- Null/empty results
 
 ## Testing
 
 ```bash
-bash ocxo-extract.test.sh
+pytest -o addopts='' cli/ops/agent-extract/tests -q
 ```
